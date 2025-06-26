@@ -2,7 +2,7 @@
   "name": "mi-portal-admin",
   "version": "0.1.0",
   "private": true,
-  "homepage": "https://angel-dev.github.io/mi-web/",
+  "homepage": "https://asulca24.github.io/mi-app-web",
   "dependencies": {
     "@testing-library/jest-dom": "^5.17.0",
     "@testing-library/react": "^13.4.0",
