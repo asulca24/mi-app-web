@@ -136,7 +136,7 @@ const App = () => {
 
       // Simulación de login (eliminar cuando uses la API real)
       await new Promise(resolve => setTimeout(resolve, 1000));
-      if (username === 'admin' && password === 'password123') {
+      if (username === 'admin' && password === 'admin') {
         setIsAuthenticated(true);
         setCurrentView('dashboard');
         showMessage('Inicio de sesión exitoso (simulado).', 'success');
