@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, query, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDocs } from 'firebase/firestore'; // Import getDocs for initial population check
 
-// Datos de equipos proporcionados por el usuario (desde response.json)
+// Datos iniciales de equipos. Se usarán para poblar Firestore si está vacío.
 const initialEquipmentData = [
   { "nombre": "Laptop Lenovo ThinkPad", "tipo": "Portátil", "sede": "Sede Lima", "sku": "EQP001" },
   { "nombre": "Laptop Lenovo ThinkPad", "tipo": "Portátil", "sede": "Sede Arequipa", "sku": "EQP002" },
@@ -10,44 +13,39 @@ const initialEquipmentData = [
   { "nombre": "CPU HP ProDesk 400", "tipo": "PC Escritorio", "sede": "Sede Lima", "sku": "EQP006" },
   { "nombre": "CPU HP ProDesk 400", "tipo": "PC Escritorio", "sede": "Sede Piura", "sku": "EQP007" },
   { "nombre": "Impresora HP LaserJet", "tipo": "Impresora", "sede": "Sede Lima", "sku": "EQP008" },
-  { "nombre": "Impresora HP LaserJet", "tipo": "Impresora", "sede": "Sede Chiclayo", "sku": "EQP010" },
+  { "nombre": "Impresora HP LaserJet", "tipo": "Impresora", "sede": "Sede Chiclayo", "sku": "EQP009" },
   { "nombre": "Router TP-Link Archer", "tipo": "Red", "sede": "Sede Lima", "sku": "EQP010" }
 ];
 
-// URL base de la API (¡REEMPLAZA ESTO CON LA URL DE TU API DE BACKEND REAL Y DESPLEGADA!)
-const API_BASE_URL = 'https://your-backend-api.com/api';
+// Variables globales proporcionadas por el entorno de Canvas (si se ejecuta aquí)
+// En un proyecto real, estas vendrían de un archivo de configuración de Firebase
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-// Componente principal de la aplicación
+// Instancias de Firebase (se inicializarán en useEffect)
+let appInstance;
+let dbInstance;
+let authInstance;
+
 const App = () => {
-  // Estado para gestionar la vista actual (ej. 'dashboard', 'users', 'equipment', 'login')
   const [currentView, setCurrentView] = useState('login');
-  // Estado para simular la autenticación del usuario
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  // Estado para los datos de usuarios
-  const [users, setUsers] = useState([]);
-  // Estado para los datos de equipos
+  const [users, setUsers] = useState([]); // Mantener estado aunque no se muestre para evitar errores
   const [equipment, setEquipment] = useState([]);
-  // Estado para la visibilidad del modal de usuarios
-  const [isUserModalOpen, setIsUserModalOpen] = useState(false);
-  // Estado para el usuario actual siendo editado/visto
-  const [currentUser, setCurrentUser] = useState(null);
-  // Estado para el tipo de modal de usuario ('view', 'edit', 'add')
-  const [userModalType, setUserModalType] = useState('');
-  // Estado para la visibilidad del modal de equipos
+  // No hay modals ni estados para usuarios si no se manejan
   const [isEquipmentModalOpen, setIsEquipmentModalOpen] = useState(false);
-  // Estado para el equipo actual siendo editado/visto
   const [currentEquipment, setCurrentEquipment] = useState(null);
-  // Estado para el tipo de modal de equipo ('view', 'edit', 'add')
   const [equipmentModalType, setEquipmentModalType] = useState('');
 
-  // Estados para retroalimentación de llamadas a la API
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Token de autenticación simulado (en una aplicación real se obtendría del login y se almacenaría de forma segura)
-  const [authToken, setAuthToken] = useState('simulated_jwt_token_123');
+  // Estados específicos para Firebase Authentication
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [userId, setUserId] = useState(null);
 
-  // Función para mostrar mensajes de error/éxito
+  // Función para mostrar mensajes de notificación
   const showMessage = (message, type = 'info') => {
     const messageBox = document.createElement('div');
     messageBox.className = `fixed top-4 right-4 p-4 rounded-lg shadow-lg text-white z-50 ${
@@ -60,88 +58,110 @@ const App = () => {
     }, 3000);
   };
 
-  // Simular la obtención de datos iniciales al montar el componente
+  // Inicialización de Firebase y manejo del estado de autenticación
   useEffect(() => {
-    const fetchData = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        // --- INICIO DE LLAMADAS A LA API REAL (DESCOMENTAR Y ADAPTAR) ---
+    // Solo inicializa Firebase si la configuración está presente y aún no se ha inicializado
+    if (Object.keys(firebaseConfig).length > 0 && !appInstance) {
+      appInstance = initializeApp(firebaseConfig);
+      dbInstance = getFirestore(appInstance);
+      authInstance = getAuth(appInstance);
 
-        // Ejemplo para obtener usuarios:
-        // const userResponse = await fetch(`${API_BASE_URL}/users`, {
-        //   headers: { 'Authorization': `Bearer ${authToken}` }
-        // });
-        // if (!userResponse.ok) throw new Error(`HTTP error! status: ${userResponse.status}`);
-        // const userData = await userResponse.json();
-        // setUsers(userData);
-        // showMessage('Datos de usuarios cargados.', 'success');
+      // Escuchar cambios en el estado de autenticación
+      const unsubscribe = onAuthStateChanged(authInstance, async (user) => {
+        if (user) {
+          // Usuario autenticado
+          setUserId(user.uid);
+          setIsAuthenticated(true);
+        } else {
+          // No hay usuario autenticado, intenta iniciar sesión con token personalizado o anónimamente
+          try {
+            if (initialAuthToken) {
+              await signInWithCustomToken(authInstance, initialAuthToken);
+              console.log("Sesión iniciada con token personalizado.");
+            } else {
+              await signInAnonymously(authInstance);
+              console.log("Sesión iniciada anónimamente.");
+            }
+          } catch (error) {
+            console.error("Error al iniciar sesión en Firebase:", error);
+            setError("Error de autenticación de Firebase: " + error.message);
+            showMessage("Error de autenticación. Por favor, recarga la página.", 'error');
+          }
+          setIsAuthenticated(!!authInstance.currentUser); // Actualiza si hay usuario después del intento
+        }
+        setIsAuthReady(true); // El estado de autenticación ha sido verificado
+      });
 
-        // Ejemplo para obtener equipos:
-        // const equipResponse = await fetch(`${API_BASE_URL}/equipment`, {
-        //   headers: { 'Authorization': `Bearer ${authToken}` }
-        // });
-        // if (!equipResponse.ok) throw new Error(`HTTP error! status: ${equipResponse.status}`);
-        // const equipData = await equipResponse.json();
-        // setEquipment(equipData.map(item => ({ ...item, id: item.id || item.sku })));
-        // showMessage('Datos de equipos cargados.', 'success');
-
-        // --- FIN DE LLAMADAS A LA API REAL ---
-
-        // Simulación de carga de datos iniciales (eliminar cuando uses la API real)
-        await new Promise(resolve => setTimeout(resolve, 500));
-        setUsers([
-          { id: 'user-001', name: 'Juan Pérez', email: 'juan.perez@example.com', role: 'Administrador' },
-          { id: 'user-002', name: 'María García', email: 'maria.garcia@example.com', role: 'Editor' },
-          { id: 'user-003', name: 'Carlos Sánchez', email: 'carlos.sanchez@example.com', role: 'Usuario' },
-        ]);
-        showMessage('Datos de usuarios cargados (simulados).', 'success');
-
-        await new Promise(resolve => setTimeout(resolve, 500));
-        setEquipment(initialEquipmentData.map((item, index) => ({ ...item, id: `equip-${index}` })));
-        showMessage('Datos de equipos cargados (simulados).', 'success');
-
-      } catch (err) {
-        setError('Error al cargar datos iniciales: ' + err.message);
-        showMessage('Error al cargar datos iniciales.', 'error');
-        console.error('Error fetching initial data:', err);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    if (isAuthenticated) {
-      fetchData();
+      // Limpiar la suscripción al desmontar el componente
+      return () => unsubscribe();
+    } else if (Object.keys(firebaseConfig).length === 0) {
+      // Modo de simulación si no hay configuración de Firebase (ej. para desarrollo local sin Firebase configurado)
+      console.warn("Configuración de Firebase no proporcionada. Ejecutando en modo de simulación.");
+      setIsAuthenticated(true); // Simular autenticación para pruebas locales
+      setIsAuthReady(true);
     }
-  }, [isAuthenticated, authToken]);
+  }, []); // Se ejecuta solo una vez al montar
 
-  // Función para manejar el inicio de sesión (simulado con llamada a API)
+  // Carga de datos de Firestore en tiempo real (solo equipment, ya no users)
+  useEffect(() => {
+    // Solo intentar cargar datos si Firebase está listo y autenticado
+    if (isAuthReady && isAuthenticated && dbInstance && userId) {
+      // **Se elimina la carga de usuarios según la solicitud**
+      // Sin embargo, mantendremos la colección 'users' vacía o ignorada si no se usa.
+
+      // Cargar Equipos en tiempo real
+      const equipmentColRef = collection(dbInstance, `artifacts/${appId}/public/data/equipment`);
+      const unsubscribeEquipment = onSnapshot(equipmentColRef, async (snapshot) => {
+        const equipmentData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setEquipment(equipmentData);
+        if (equipmentData.length === 0) {
+            // Si la colección de equipos está vacía, la poblamos con datos iniciales
+            // Esto solo se ejecuta si la colección está realmente vacía
+            await populateInitialEquipment(equipmentColRef);
+        }
+        showMessage('Datos de equipos cargados.', 'success');
+      }, (err) => {
+        setError('Error al cargar equipos: ' + err.message);
+        showMessage('Error al cargar equipos.', 'error');
+        console.error('Error cargando equipos desde Firestore:', err);
+      });
+
+      // Función para poblar equipos si la colección está vacía
+      async function populateInitialEquipment(collectionRef) {
+          const snapshot = await getDocs(collectionRef);
+          if (snapshot.empty) {
+              console.log("Colección de equipos vacía, poblando con datos iniciales...");
+              for (const item of initialEquipmentData) {
+                  await addDoc(collectionRef, item);
+              }
+              showMessage('Colección de equipos poblada con datos iniciales.', 'info');
+          }
+      }
+
+      // Limpiar los listeners al desmontar o cambiar el estado de autenticación
+      return () => {
+        unsubscribeEquipment();
+      };
+    } else if (isAuthReady && !isAuthenticated) {
+      // Si no está autenticado después de que auth esté listo, limpiar datos
+      setUsers([]); // Mantenemos el estado en vacío
+      setEquipment([]);
+      setCurrentView('login');
+    }
+  }, [isAuthReady, isAuthenticated, userId]); // Dependencias: Firebase listo, autenticado, ID de usuario
+
+  // Función de inicio de sesión (simulada para la lógica de la UI, ya que la autenticación de Firebase
+  // se maneja automáticamente en el `useEffect` para el entorno Canvas).
   const handleLogin = async (username, password) => {
     setIsLoading(true);
     setError(null);
     try {
-      // --- INICIO DE LLAMADA A LA API REAL (DESCOMENTAR Y ADAPTAR) ---
-      // const response = await fetch(`${API_BASE_URL}/login`, {
-      //   method: 'POST',
-      //   headers: { 'Content-Type': 'application/json' },
-      //   body: JSON.stringify({ username, password })
-      // });
-      // if (!response.ok) throw new Error('Credenciales incorrectas');
-      // const data = await response.json();
-      // setAuthToken(data.token); // Almacena el token recibido
-      // setIsAuthenticated(true);
-      // setCurrentView('dashboard');
-      // showMessage('Inicio de sesión exitoso.', 'success');
-      // --- FIN DE LLAMADA A LA API REAL ---
-
-      // Simulación de login (eliminar cuando uses la API real)
-      await new Promise(resolve => setTimeout(resolve, 1000));
       if (username === 'admin' && password === 'admin') {
         setIsAuthenticated(true);
         setCurrentView('dashboard');
-        showMessage('Inicio de sesión exitoso (simulado).', 'success');
+        showMessage('Inicio de sesión exitoso.', 'success');
       } else {
-        throw new Error('Credenciales incorrectas.');
+        throw new Error('Credenciales incorrectas. (Usuario: admin, Contraseña: admin)');
       }
     } catch (err) {
       setError(err.message);
@@ -152,115 +172,35 @@ const App = () => {
     }
   };
 
-  // Función para cerrar sesión
-  const handleLogout = () => {
-    setIsAuthenticated(false);
-    setAuthToken(null); // Limpiar token al cerrar sesión
-    setCurrentView('login');
-    showMessage('Sesión cerrada.', 'info');
-  };
-
-  // Funciones de gestión de usuarios (con llamadas a API simuladas)
-  const openUserModal = (user, type) => {
-    setCurrentUser(user);
-    setUserModalType(type);
-    setIsUserModalOpen(true);
-  };
-
-  const closeUserModal = () => {
-    setIsUserModalOpen(false);
-    setCurrentUser(null);
-    setUserModalType('');
-  };
-
-  const handleSaveUser = async (user) => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      // --- INICIO DE LLAMADAS A LA API REAL (DESCOMENTAR Y ADAPTAR) ---
-      // let response;
-      // if (user.id && !user.id.startsWith('user-')) { // Si tiene un ID real (no simulado)
-      //   response = await fetch(`${API_BASE_URL}/users/${user.id}`, {
-      //     method: 'PUT',
-      //     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
-      //     body: JSON.stringify(user)
-      //   });
-      // } else {
-      //   response = await fetch(`${API_BASE_URL}/users`, {
-      //     method: 'POST',
-      //     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
-      //     body: JSON.stringify(user)
-      //   });
-      // }
-      // if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      // const savedUser = await response.json();
-      // setUsers(users.map(u => (u.id === savedUser.id ? savedUser : u)));
-      // showMessage('Usuario guardado exitosamente.', 'success');
-      // --- FIN DE LLAMADAS A LA API REAL ---
-
-      // Simulación de guardado de usuario (eliminar cuando uses la API real)
-      await new Promise(resolve => setTimeout(resolve, 500));
-      if (user.id) {
-        setUsers(users.map(u => (u.id === user.id ? user : u)));
-        showMessage('Usuario actualizado exitosamente (simulado).', 'success');
-      } else {
-        const newUser = { ...user, id: `user-${Date.now()}` };
-        setUsers([...users, newUser]);
-        showMessage('Usuario añadido exitosamente (simulado).', 'success');
+  // Función para cerrar sesión de Firebase
+  const handleLogout = async () => {
+    if (authInstance) {
+      try {
+        await authInstance.signOut();
+        setIsAuthenticated(false);
+        setUserId(null);
+        setCurrentView('login');
+        showMessage('Sesión cerrada correctamente.', 'info');
+      } catch (error) {
+        console.error("Error al cerrar sesión:", error);
+        setError("Error al cerrar sesión: " + error.message);
+        showMessage("Error al cerrar sesión.", 'error');
       }
-      closeUserModal();
-    } catch (err) {
-      setError('Error al guardar usuario: ' + err.message);
-      showMessage('Error al guardar usuario.', 'error');
-      console.error('Save user error:', err);
-    } finally {
-      setIsLoading(false);
+    } else {
+      // Fallback para modo simulación o si Firebase no se inicializó
+      setIsAuthenticated(false);
+      setUserId(null);
+      setCurrentView('login');
+      showMessage('Sesión cerrada (simulado).', 'info');
     }
   };
 
-  const handleDeleteUser = (userId) => {
-    const confirmModal = document.createElement('div');
-    confirmModal.className = "fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50";
-    confirmModal.innerHTML = `
-      <div class="bg-white p-6 rounded-lg shadow-xl text-center">
-        <p class="text-lg font-semibold mb-4">¿Estás seguro de que quieres eliminar este usuario?</p>
-        <button id="confirmDelete" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg mr-2">Sí, Eliminar</button>
-        <button id="cancelDelete" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg">Cancelar</button>
-      </div>
-    `;
-    document.body.appendChild(confirmModal);
 
-    document.getElementById('confirmDelete').onclick = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        // --- INICIO DE LLAMADA A LA API REAL (DESCOMENTAR Y ADAPTAR) ---
-        // await fetch(`${API_BASE_URL}/users/${userId}`, {
-        //   method: 'DELETE',
-        //   headers: { 'Authorization': `Bearer ${authToken}` }
-        // });
-        // --- FIN DE LLAMADA A LA API REAL ---
+  // Funciones de gestión de usuarios (ELIMINADAS o NO USADAS según solicitud del usuario)
+  // No se incluyen openUserModal, closeUserModal, handleSaveUser, handleDeleteUser aquí
+  // ya que el usuario ha solicitado no manejar usuarios en ningún nivel.
 
-        // Simulación de eliminación de usuario (eliminar cuando uses la API real)
-        await new Promise(resolve => setTimeout(resolve, 500));
-        setUsers(users.filter(user => user.id !== userId));
-        showMessage('Usuario eliminado exitosamente (simulado).', 'success');
-        closeUserModal();
-      } catch (err) {
-        setError('Error al eliminar usuario: ' + err.message);
-        showMessage('Error al eliminar usuario.', 'error');
-        console.error('Delete user error:', err);
-      } finally {
-        setIsLoading(false);
-        document.body.removeChild(confirmModal);
-      }
-    };
-    document.getElementById('cancelDelete').onclick = () => {
-      document.body.removeChild(confirmModal);
-    };
-  };
-
-  // Funciones de gestión de equipos (con llamadas a API simuladas)
+  // Funciones de gestión de equipos (usando Firestore)
   const openEquipmentModal = (item, type) => {
     setCurrentEquipment(item);
     setEquipmentModalType(type);
@@ -277,48 +217,28 @@ const App = () => {
     setIsLoading(true);
     setError(null);
     try {
-      // --- INICIO DE LLAMADAS A LA API REAL (DESCOMENTAR Y ADAPTAR) ---
-      // let response;
-      // if (item.id && !item.id.startsWith('equip-')) { // Si tiene un ID real (no simulado)
-      //   response = await fetch(`${API_BASE_URL}/equipment/${item.id}`, {
-      //     method: 'PUT',
-      //     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
-      //     body: JSON.stringify(item)
-      //   });
-      // } else {
-      //   response = await fetch(`${API_BASE_URL}/equipment`, {
-      //     method: 'POST',
-      //     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
-      //     body: JSON.stringify(item)
-      //   });
-      // }
-      // if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      // const savedItem = await response.json();
-      // setEquipment(equipment.map(e => (e.id === savedItem.id ? savedItem : e)));
-      // showMessage('Equipo guardado exitosamente.', 'success');
-      // --- FIN DE LLAMADAS A LA API REAL ---
-
-      // Simulación de guardado de equipo (eliminar cuando uses la API real)
-      await new Promise(resolve => setTimeout(resolve, 500));
-      if (item.id) {
-        setEquipment(equipment.map(e => (e.id === item.id ? item : e)));
-        showMessage('Equipo actualizado exitosamente (simulado).', 'success');
-      } else {
-        const newItem = { ...item, id: `equip-${Date.now()}` };
-        setEquipment([...equipment, newItem]);
-        showMessage('Equipo añadido exitosamente (simulado).', 'success');
+      const equipmentColRef = collection(dbInstance, `artifacts/${appId}/public/data/equipment`);
+      if (item.id) { // Si el equipo ya tiene un ID, es una actualización
+        const equipmentDocRef = doc(dbInstance, `artifacts/${appId}/public/data/equipment`, item.id);
+        await updateDoc(equipmentDocRef, item);
+        showMessage('Equipo actualizado exitosamente.', 'success');
+      } else { // Si no tiene ID, es un nuevo equipo
+        // Eliminar ID temporal antes de añadir a Firestore
+        const { id, ...itemWithoutTempId } = item;
+        await addDoc(equipmentColRef, itemWithoutTempId);
+        showMessage('Equipo añadido exitosamente.', 'success');
       }
       closeEquipmentModal();
     } catch (err) {
       setError('Error al guardar equipo: ' + err.message);
       showMessage('Error al guardar equipo.', 'error');
-      console.error('Save equipment error:', err);
+      console.error('Error guardando equipo en Firestore:', err);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleDeleteEquipment = (equipmentId) => {
+  const handleDeleteEquipment = (equipmentIdToDelete) => {
     const confirmModal = document.createElement('div');
     confirmModal.className = "fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50";
     confirmModal.innerHTML = `
@@ -334,22 +254,14 @@ const App = () => {
       setIsLoading(true);
       setError(null);
       try {
-        // --- INICIO DE LLAMADA A LA API REAL (DESCOMENTAR Y ADAPTAR) ---
-        // await fetch(`${API_BASE_URL}/equipment/${equipmentId}`, {
-        //   method: 'DELETE',
-        //   headers: { 'Authorization': `Bearer ${authToken}` }
-        // });
-        // --- FIN DE LLAMADA A LA API REAL ---
-
-        // Simulación de eliminación de equipo (eliminar cuando uses la API real)
-        await new Promise(resolve => setTimeout(resolve, 500));
-        setEquipment(equipment.filter(item => item.id !== equipmentId));
-        showMessage('Equipo eliminado exitosamente (simulado).', 'success');
+        const equipmentDocRef = doc(dbInstance, `artifacts/${appId}/public/data/equipment`, equipmentIdToDelete);
+        await deleteDoc(equipmentDocRef);
+        showMessage('Equipo eliminado exitosamente.', 'success');
         closeEquipmentModal();
       } catch (err) {
         setError('Error al eliminar equipo: ' + err.message);
         showMessage('Error al eliminar equipo.', 'error');
-        console.error('Delete equipment error:', err);
+        console.error('Error eliminando equipo de Firestore:', err);
       } finally {
         setIsLoading(false);
         document.body.removeChild(confirmModal);
@@ -367,7 +279,6 @@ const App = () => {
     </div>
   );
 
-
   // Componentes para las diferentes vistas
   const Dashboard = () => (
     <div className="p-6">
@@ -382,8 +293,9 @@ const App = () => {
           <p className="text-5xl font-bold text-teal-600">{equipment.length}</p>
         </div>
         <div className="bg-white rounded-lg shadow-md p-6">
-          <h3 className="text-xl font-semibold text-gray-700 mb-2">Ventas del Mes</h3>
-          <p className="text-5xl font-bold text-green-600">$12,345</p>
+          {/* MODIFICACIÓN: "Ventas del Mes" a "Cantidad de Servicios de Mantenimiento" */}
+          <h3 className="text-xl font-semibold text-gray-700 mb-2">Cantidad de Servicios de Mantenimiento</h3>
+          <p className="text-5xl font-bold text-green-600">XX</p> {/* Placeholder para la cantidad */}
         </div>
       </div>
       <div className="mt-8 bg-white rounded-lg shadow-md p-6">
@@ -398,74 +310,8 @@ const App = () => {
     </div>
   );
 
-  const UserManagement = () => (
-    <div className="p-6">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-3xl font-bold text-gray-800">Gestión de Usuarios</h2>
-        <button
-          onClick={() => openUserModal({ name: '', email: '', role: 'Usuario' }, 'add')}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 inline-block mr-2" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clipRule="evenodd" />
-          </svg>
-          Añadir Usuario
-        </button>
-      </div>
-
-      <div className="bg-white rounded-lg shadow-md overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nombre</th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rol</th>
-              <th scope="col" className="relative px-6 py-3"><span className="sr-only">Acciones</span></th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {users.map((user) => (
-              <tr key={user.id}>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{user.name}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{user.email}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{user.role}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                  <button
-                    onClick={() => openUserModal(user, 'view')}
-                    className="text-blue-600 hover:text-blue-900 mr-4"
-                    title="Ver"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 inline-block" viewBox="0 0 20 20" fill="currentColor">
-                      <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
-                      <path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={() => openUserModal(user, 'edit')}
-                    className="text-indigo-600 hover:text-indigo-900 mr-4"
-                    title="Editar"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 inline-block" viewBox="0 0 20 20" fill="currentColor">
-                      <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zm-3.586 3.586L1.586 15H5v3.414l8.414-8.414-3.414-3.414z" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={() => handleDeleteUser(user.id)}
-                    className="text-red-600 hover:text-red-900"
-                    title="Eliminar"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 inline-block" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 011-1h4a1 1 0 110 2H8a1 1 0 01-1-1zm6 3a1 1 0 100 2h1a1 1 0 100-2h-1z" clipRule="evenodd" />
-                    </svg>
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
+  // **Se elimina el componente UserManagement según la solicitud**
+  // const UserManagement = () => { /* ... */ };
 
   const DataMasters = () => (
     <div className="p-6">
@@ -564,40 +410,25 @@ const App = () => {
 
   const OrdersManagement = () => (
     <div className="p-6">
-      <h2 className="text-3xl font-bold text-gray-800 mb-6">Gestión de Pedidos/Transacciones</h2>
-      <p className="text-gray-600">Aquí se visualizarían y gestionarían los pedidos realizados desde la aplicación móvil.</p>
+      {/* MODIFICACIÓN: "Gestión de Pedidos/Transacciones" a "Gestión de Órdenes de Servicio" */}
+      <h2 className="text-3xl font-bold text-gray-800 mb-6">Gestión de Órdenes de Servicio</h2>
+      <p className="text-gray-600">Aquí se visualizarían y gestionarían las órdenes de servicio/mantenimiento realizadas desde la aplicación móvil.</p>
       <div className="mt-6 p-6 bg-white rounded-lg shadow-md">
-        <h3 className="text-xl font-semibold text-gray-700 mb-4">Pedidos Recientes</h3>
+        <h3 className="text-xl font-semibold text-gray-700 mb-4">Órdenes de Servicio Recientes</h3>
         <ul className="list-disc list-inside text-gray-600">
-          <li>Pedido #12345 - Pendiente</li>
-          <li>Pedido #12344 - Completado</li>
-          <li>Pedido #12343 - En Proceso</li>
+          <li>Orden #12345 - Pendiente</li>
+          <li>Orden #12344 - Completada</li>
+          <li>Orden #12343 - En Proceso</li>
         </ul>
         <button className="mt-4 bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md">
-          Ver Todos los Pedidos
+          Ver Todas las Órdenes
         </button>
       </div>
     </div>
   );
 
-  const ReportsAndStats = () => (
-    <div className="p-6">
-      <h2 className="text-3xl font-bold text-gray-800 mb-6">Informes y Estadísticas</h2>
-      <p className="text-gray-600">Dashboards con métricas relevantes (ej., ventas, usuarios activos).</p>
-      <div className="mt-6 p-6 bg-white rounded-lg shadow-md">
-        <h3 className="text-xl font-semibold text-gray-700 mb-4">Gráfico de Ventas Mensuales</h3>
-        <div className="bg-gray-100 h-48 rounded-lg flex items-center justify-center text-gray-500">
-          [Gráfico de barras simulado]
-        </div>
-      </div>
-      <div className="mt-6 p-6 bg-white rounded-lg shadow-md">
-        <h3 className="text-xl font-semibold text-gray-700 mb-4">Usuarios Activos por Día</h3>
-        <div className="bg-gray-100 h-48 rounded-lg flex items-center justify-center text-gray-500">
-          [Gráfico de líneas simulado]
-        </div>
-      </div>
-    </div>
-  );
+  // **Se elimina el componente ReportsAndStats según la solicitud**
+  // const ReportsAndStats = () => { /* ... */ };
 
   // Componente del formulario de inicio de sesión
   const LoginForm = () => {
@@ -652,121 +483,8 @@ const App = () => {
     );
   };
 
-  // Componente de modal de usuario (Ver/Editar/Añadir)
-  const UserModal = ({ isOpen, onClose, user, type, onSave, onDelete }) => {
-    const [name, setName] = useState('');
-    const [email, setEmail] = useState('');
-    const [role, setRole] = useState('');
-
-    useEffect(() => {
-      if (user) {
-        setName(user.name);
-        setEmail(user.email);
-        setRole(user.role);
-      }
-    }, [user]);
-
-    const handleSubmit = (e) => {
-      e.preventDefault();
-      onSave({ ...user, name, email, role });
-    };
-
-    if (!isOpen) return null;
-
-    const isView = type === 'view';
-    const isEdit = type === 'edit';
-    const isAdd = type === 'add';
-
-    return (
-      <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center z-50">
-        <div className="relative bg-white rounded-lg shadow-xl p-8 max-w-lg w-full mx-4">
-          <h3 className="text-2xl font-bold text-gray-800 mb-6 text-center">
-            {isView ? 'Detalles del Usuario' : isEdit ? 'Editar Usuario' : 'Añadir Nuevo Usuario'}
-          </h3>
-
-          <form onSubmit={handleSubmit}>
-            <div className="mb-4">
-              <label htmlFor="modal-name" className="block text-gray-700 text-sm font-bold mb-2">Nombre:</label>
-              <input
-                type="text"
-                id="modal-name"
-                className="shadow appearance-none border rounded-lg w-full py-3 px-4 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                readOnly={isView}
-                required
-              />
-            </div>
-            <div className="mb-4">
-              <label htmlFor="modal-email" className="block text-gray-700 text-sm font-bold mb-2">Email:</label>
-              <input
-                type="email"
-                id="modal-email"
-                className="shadow appearance-none border rounded-lg w-full py-3 px-4 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                readOnly={isView}
-                required
-              />
-            </div>
-            <div className="mb-6">
-              <label htmlFor="modal-role" className="block text-gray-700 text-sm font-bold mb-2">Rol:</label>
-              <select
-                id="modal-role"
-                className="shadow border rounded-lg w-full py-3 px-4 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-                disabled={isView}
-              >
-                <option value="Administrador">Administrador</option>
-                <option value="Editor">Editor</option>
-                <option value="Usuario">Usuario</option>
-              </select>
-            </div>
-
-            <div className="flex justify-end gap-4">
-              {isView && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    openUserModal(user, 'edit'); // Reabre en modo edición
-                  }}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
-                >
-                  Editar
-                </button>
-              )}
-              {(isEdit || isAdd) && (
-                <button
-                  type="submit"
-                  className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
-                >
-                  Guardar Cambios
-                </button>
-              )}
-              {isEdit && (
-                <button
-                  type="button"
-                  onClick={() => onDelete(user.id)}
-                  className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
-                >
-                  Eliminar
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={onClose}
-                className="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
-              >
-                Cerrar
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    );
-  };
+  // **Se elimina el componente UserModal según la solicitud**
+  // const UserModal = ({ isOpen, onClose, user, type, onSave, onDelete }) => { /* ... */ };
 
   // Componente de modal de equipo (Ver/Editar/Añadir)
   const EquipmentModal = ({ isOpen, onClose, equipmentItem, type, onSave, onDelete }) => {
@@ -896,7 +614,6 @@ const App = () => {
     );
   };
 
-
   // Diseño principal de la aplicación
   return (
     <div className="min-h-screen bg-gray-100 font-sans text-gray-900">
@@ -924,7 +641,8 @@ const App = () => {
                   Dashboard
                 </button>
               </li>
-              <li className="mb-3">
+              {/* MODIFICACIÓN: Se quita el elemento del menú "Usuarios" */}
+              {/* <li className="mb-3">
                 <button
                   onClick={() => setCurrentView('users')}
                   className={`block w-full text-left py-3 px-4 rounded-lg transition duration-200 ${
@@ -936,7 +654,7 @@ const App = () => {
                   </svg>
                   Usuarios
                 </button>
-              </li>
+              </li> */}
               <li className="mb-3">
                 <button
                   onClick={() => setCurrentView('equipment')}
@@ -945,7 +663,8 @@ const App = () => {
                   }`}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 inline-block mr-3" viewBox="0 0 20 20" fill="currentColor">
-                    <path d="M10 2a1 1 0 00-1 1v1a1 1 0 002 0V3a1 1 0 00-1-1zm4 3a1 1 0 00-1 1v1a1 1 0 002 0V6a1 1 0 00-1-1zM6 5a1 1 0 00-1 1v1a1 1 0 002 0V6a1 1 0 00-1-1zm-1 9a1 1 0 00-1 1v1a1 1 0 002 0v-1a1 1 0 00-1-1zm4 3a1 1 0 00-1 1v1a1 1 0 002 0v-1a1 1 0 00-1-1zm4-3a1 1 0 00-1 1v1a1 1 0 002 0v-1a1 1 0 00-1-1zM3 8a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" />
+                    <path d="M10 2a1 1 0 00-1 1v1a1 1 0 002 0V3a1 1 0 00-1-1zm4 3a1 1 0 00-1 1v1a1 1 0
+                    002 0V6a1 1 0 00-1-1zM6 5a1 1 0 00-1 1v1a1 1 0 002 0V6a1 1 0 00-1-1zm-1 9a1 1 0 00-1 1v1a1 1 0 002 0v-1a1 1 0 00-1-1zm4 3a1 1 0 00-1 1v1a1 1 0 002 0v-1a1 1 0 00-1-1zm4-3a1 1 0 00-1 1v1a1 1 0 002 0v-1a1 1 0 00-1-1zM3 8a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" />
                   </svg>
                   Equipos
                 </button>
@@ -974,10 +693,12 @@ const App = () => {
                     <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
                     <path fillRule="evenodd" d="M4 5a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V7a2 2 0 00-2-2h-1.586a1 1 0 01-.707-.293l-1.121-1.121A2 2 0 0011.172 3H8.828a2 2 0 00-1.414.586L6.293 4.707A1 1 0 015.586 5H4zm6 9a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
                   </svg>
-                  Pedidos
+                  {/* MODIFICACIÓN: "Pedidos" a "Órdenes de Servicio" */}
+                  Órdenes de Servicio
                 </button>
               </li>
-              <li className="mb-3">
+              {/* MODIFICACIÓN: Se quita el elemento del menú "Informes" */}
+              {/* <li className="mb-3">
                 <button
                   onClick={() => setCurrentView('reports')}
                   className={`block w-full text-left py-3 px-4 rounded-lg transition duration-200 ${
@@ -989,7 +710,7 @@ const App = () => {
                   </svg>
                   Informes
                 </button>
-              </li>
+              </li> */}
               <li className="mt-8">
                 <button
                   onClick={handleLogout}
@@ -1007,22 +728,24 @@ const App = () => {
           {/* Área de contenido principal */}
           <main className="flex-grow p-4 md:p-6 bg-gray-100 rounded-tl-lg md:rounded-bl-none md:rounded-tr-lg shadow-lg">
             {currentView === 'dashboard' && <Dashboard />}
-            {currentView === 'users' && <UserManagement />}
+            {/* MODIFICACIÓN: Se quita la renderización de UserManagement */}
+            {/* {currentView === 'users' && <UserManagement />} */}
             {currentView === 'equipment' && <EquipmentManagement />}
             {currentView === 'data-masters' && <DataMasters />}
             {currentView === 'orders' && <OrdersManagement />}
-            {currentView === 'reports' && <ReportsAndStats />}
+            {/* MODIFICACIÓN: Se quita la renderización de ReportsAndStats */}
+            {/* {currentView === 'reports' && <ReportsAndStats />} */}
           </main>
 
-          {/* Modal de Usuario */}
-          <UserModal
+          {/* MODIFICACIÓN: Se elimina el Modal de Usuario */}
+          {/* <UserModal
             isOpen={isUserModalOpen}
             onClose={closeUserModal}
             user={currentUser}
             type={userModalType}
             onSave={handleSaveUser}
             onDelete={handleDeleteUser}
-          />
+          /> */}
 
           {/* Modal de Equipo */}
           <EquipmentModal
