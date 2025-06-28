@@ -19,9 +19,19 @@ const initialEquipmentData = [
 
 // Variables globales proporcionadas por el entorno de Canvas (si se ejecuta aquí)
 // En un proyecto real, estas vendrían de un archivo de configuración de Firebase
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+//const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+//const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+//const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+const appId = "tu_app_id";
+const firebaseConfig = {
+  apiKey: "tu_api_key",
+  authDomain: "tu_auth_domain",
+};
+const initialAuthToken = "tu_token";
+
+
+
 
 // Instancias de Firebase (se inicializarán en useEffect)
 let appInstance;
