@@ -1,15 +1,15 @@
 {
   "files": {
     "main.css": "/mi-app-web/static/css/main.794a1146.css",
-    "main.js": "/mi-app-web/static/js/main.6e45904b.js",
+    "main.js": "/mi-app-web/static/js/main.9240d7a9.js",
     "static/js/453.8ce043ef.chunk.js": "/mi-app-web/static/js/453.8ce043ef.chunk.js",
     "index.html": "/mi-app-web/index.html",
     "main.794a1146.css.map": "/mi-app-web/static/css/main.794a1146.css.map",
-    "main.6e45904b.js.map": "/mi-app-web/static/js/main.6e45904b.js.map",
+    "main.9240d7a9.js.map": "/mi-app-web/static/js/main.9240d7a9.js.map",
     "453.8ce043ef.chunk.js.map": "/mi-app-web/static/js/453.8ce043ef.chunk.js.map"
   },
   "entrypoints": [
     "static/css/main.794a1146.css",
-    "static/js/main.6e45904b.js"
+    "static/js/main.9240d7a9.js"
   ]
 }

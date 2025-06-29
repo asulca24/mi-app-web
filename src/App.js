@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, query, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDocs } from 'firebase/firestore'; // Import getDocs for initial population check
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth'; // Eliminado signInWithCustomToken
+import { getFirestore, collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDocs } from 'firebase/firestore'; // Eliminado query
 
 // Datos iniciales de equipos. Se usarán para poblar Firestore si está vacío.
 const initialEquipmentData = [
@@ -17,20 +17,23 @@ const initialEquipmentData = [
   { "nombre": "Router TP-Link Archer", "tipo": "Red", "sede": "Sede Lima", "sku": "EQP010" }
 ];
 
-// Variables globales proporcionadas por el entorno de Canvas (si se ejecuta aquí)
-// En un proyecto real, estas vendrían de un archivo de configuración de Firebase
-//const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-//const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-//const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
-const appId = "tu_app_id";
+// Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: "tu_api_key",
-  authDomain: "tu_auth_domain",
+  apiKey: "AIzaSyAnF4RJ7SEkemVsls3x3nHyR8fevzCGle4",
+  authDomain: "mi-primer-app-2025-1.firebaseapp.com",
+  projectId: "mi-primer-app-2025-1",
+  storageBucket: "mi-primer-app-2025-1.firebasestorage.app",
+  messagingSenderId: "1010246293907",
+  appId: "1:1010246293907:web:44985626e33b5c352df066"
 };
-const initialAuthToken = "tu_token";
 
+const appId = firebaseConfig.appId;
 
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+
+// Exportar servicios que vayas a usar
+export const auth = getAuth(app);
 
 
 // Instancias de Firebase (se inicializarán en useEffect)
@@ -41,15 +44,14 @@ let authInstance;
 const App = () => {
   const [currentView, setCurrentView] = useState('login');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [users, setUsers] = useState([]); // Mantener estado aunque no se muestre para evitar errores
+  const [users, setUsers] = useState([]);
   const [equipment, setEquipment] = useState([]);
-  // No hay modals ni estados para usuarios si no se manejan
   const [isEquipmentModalOpen, setIsEquipmentModalOpen] = useState(false);
   const [currentEquipment, setCurrentEquipment] = useState(null);
   const [equipmentModalType, setEquipmentModalType] = useState('');
 
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState(null); // 'error' está asignado pero no se usa en la UI. Considera renderizarlo.
 
   // Estados específicos para Firebase Authentication
   const [isAuthReady, setIsAuthReady] = useState(false);
@@ -70,63 +72,45 @@ const App = () => {
 
   // Inicialización de Firebase y manejo del estado de autenticación
   useEffect(() => {
-    // Solo inicializa Firebase si la configuración está presente y aún no se ha inicializado
     if (Object.keys(firebaseConfig).length > 0 && !appInstance) {
       appInstance = initializeApp(firebaseConfig);
       dbInstance = getFirestore(appInstance);
       authInstance = getAuth(appInstance);
 
-      // Escuchar cambios en el estado de autenticación
       const unsubscribe = onAuthStateChanged(authInstance, async (user) => {
         if (user) {
-          // Usuario autenticado
           setUserId(user.uid);
           setIsAuthenticated(true);
         } else {
-          // No hay usuario autenticado, intenta iniciar sesión con token personalizado o anónimamente
           try {
-            if (initialAuthToken) {
-              await signInWithCustomToken(authInstance, initialAuthToken);
-              console.log("Sesión iniciada con token personalizado.");
-            } else {
-              await signInAnonymously(authInstance);
-              console.log("Sesión iniciada anónimamente.");
-            }
+            await signInAnonymously(authInstance);
+            console.log("Sesión iniciada anónimamente.");
           } catch (error) {
-            console.error("Error al iniciar sesión en Firebase:", error);
+            console.error("Error al iniciar sesión anónimamente en Firebase:", error);
             setError("Error de autenticación de Firebase: " + error.message);
             showMessage("Error de autenticación. Por favor, recarga la página.", 'error');
           }
-          setIsAuthenticated(!!authInstance.currentUser); // Actualiza si hay usuario después del intento
+          setIsAuthenticated(!!authInstance.currentUser);
         }
-        setIsAuthReady(true); // El estado de autenticación ha sido verificado
+        setIsAuthReady(true);
       });
 
-      // Limpiar la suscripción al desmontar el componente
       return () => unsubscribe();
     } else if (Object.keys(firebaseConfig).length === 0) {
-      // Modo de simulación si no hay configuración de Firebase (ej. para desarrollo local sin Firebase configurado)
       console.warn("Configuración de Firebase no proporcionada. Ejecutando en modo de simulación.");
-      setIsAuthenticated(true); // Simular autenticación para pruebas locales
+      setIsAuthenticated(true);
       setIsAuthReady(true);
     }
-  }, []); // Se ejecuta solo una vez al montar
+  }, []);
 
-  // Carga de datos de Firestore en tiempo real (solo equipment, ya no users)
+  // Carga de datos de Firestore en tiempo real (solo equipment)
   useEffect(() => {
-    // Solo intentar cargar datos si Firebase está listo y autenticado
     if (isAuthReady && isAuthenticated && dbInstance && userId) {
-      // **Se elimina la carga de usuarios según la solicitud**
-      // Sin embargo, mantendremos la colección 'users' vacía o ignorada si no se usa.
-
-      // Cargar Equipos en tiempo real
       const equipmentColRef = collection(dbInstance, `artifacts/${appId}/public/data/equipment`);
       const unsubscribeEquipment = onSnapshot(equipmentColRef, async (snapshot) => {
         const equipmentData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setEquipment(equipmentData);
         if (equipmentData.length === 0) {
-            // Si la colección de equipos está vacía, la poblamos con datos iniciales
-            // Esto solo se ejecuta si la colección está realmente vacía
             await populateInitialEquipment(equipmentColRef);
         }
         showMessage('Datos de equipos cargados.', 'success');
@@ -136,7 +120,6 @@ const App = () => {
         console.error('Error cargando equipos desde Firestore:', err);
       });
 
-      // Función para poblar equipos si la colección está vacía
       async function populateInitialEquipment(collectionRef) {
           const snapshot = await getDocs(collectionRef);
           if (snapshot.empty) {
@@ -148,20 +131,16 @@ const App = () => {
           }
       }
 
-      // Limpiar los listeners al desmontar o cambiar el estado de autenticación
       return () => {
         unsubscribeEquipment();
       };
     } else if (isAuthReady && !isAuthenticated) {
-      // Si no está autenticado después de que auth esté listo, limpiar datos
-      setUsers([]); // Mantenemos el estado en vacío
+      setUsers([]);
       setEquipment([]);
       setCurrentView('login');
     }
-  }, [isAuthReady, isAuthenticated, userId]); // Dependencias: Firebase listo, autenticado, ID de usuario
+  }, [isAuthReady, isAuthenticated, userId]);
 
-  // Función de inicio de sesión (simulada para la lógica de la UI, ya que la autenticación de Firebase
-  // se maneja automáticamente en el `useEffect` para el entorno Canvas).
   const handleLogin = async (username, password) => {
     setIsLoading(true);
     setError(null);
@@ -182,7 +161,6 @@ const App = () => {
     }
   };
 
-  // Función para cerrar sesión de Firebase
   const handleLogout = async () => {
     if (authInstance) {
       try {
@@ -197,7 +175,6 @@ const App = () => {
         showMessage("Error al cerrar sesión.", 'error');
       }
     } else {
-      // Fallback para modo simulación o si Firebase no se inicializó
       setIsAuthenticated(false);
       setUserId(null);
       setCurrentView('login');
@@ -205,12 +182,6 @@ const App = () => {
     }
   };
 
-
-  // Funciones de gestión de usuarios (ELIMINADAS o NO USADAS según solicitud del usuario)
-  // No se incluyen openUserModal, closeUserModal, handleSaveUser, handleDeleteUser aquí
-  // ya que el usuario ha solicitado no manejar usuarios en ningún nivel.
-
-  // Funciones de gestión de equipos (usando Firestore)
   const openEquipmentModal = (item, type) => {
     setCurrentEquipment(item);
     setEquipmentModalType(type);
@@ -228,12 +199,11 @@ const App = () => {
     setError(null);
     try {
       const equipmentColRef = collection(dbInstance, `artifacts/${appId}/public/data/equipment`);
-      if (item.id) { // Si el equipo ya tiene un ID, es una actualización
+      if (item.id) {
         const equipmentDocRef = doc(dbInstance, `artifacts/${appId}/public/data/equipment`, item.id);
         await updateDoc(equipmentDocRef, item);
         showMessage('Equipo actualizado exitosamente.', 'success');
-      } else { // Si no tiene ID, es un nuevo equipo
-        // Eliminar ID temporal antes de añadir a Firestore
+      } else {
         const { id, ...itemWithoutTempId } = item;
         await addDoc(equipmentColRef, itemWithoutTempId);
         showMessage('Equipo añadido exitosamente.', 'success');
@@ -282,14 +252,12 @@ const App = () => {
     };
   };
 
-  // Componente de spinner de carga
   const LoadingSpinner = () => (
     <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-[100]">
       <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-indigo-500"></div>
     </div>
   );
 
-  // Componentes para las diferentes vistas
   const Dashboard = () => (
     <div className="p-6">
       <h2 className="text-3xl font-bold text-gray-800 mb-6">Panel de Control</h2>
@@ -303,9 +271,8 @@ const App = () => {
           <p className="text-5xl font-bold text-teal-600">{equipment.length}</p>
         </div>
         <div className="bg-white rounded-lg shadow-md p-6">
-          {/* MODIFICACIÓN: "Ventas del Mes" a "Cantidad de Servicios de Mantenimiento" */}
           <h3 className="text-xl font-semibold text-gray-700 mb-2">Cantidad de Servicios de Mantenimiento</h3>
-          <p className="text-5xl font-bold text-green-600">XX</p> {/* Placeholder para la cantidad */}
+          <p className="text-5xl font-bold text-green-600">XX</p>
         </div>
       </div>
       <div className="mt-8 bg-white rounded-lg shadow-md p-6">
@@ -320,18 +287,13 @@ const App = () => {
     </div>
   );
 
-  // **Se elimina el componente UserManagement según la solicitud**
-  // const UserManagement = () => { /* ... */ };
-
   const DataMasters = () => (
     <div className="p-6">
       <h2 className="text-3xl font-bold text-gray-800 mb-6">Gestión de Datos Maestros</h2>
       <p className="text-gray-600">Esta sección es un marcador de posición para la gestión de productos, categorías, etc. La gestión de "Equipos" se encuentra ahora en su propia sección dedicada.</p>
-      {/* Marcador de posición para la gestión de productos/categorías */}
       <div className="mt-6 p-6 bg-white rounded-lg shadow-md">
         <h3 className="text-xl font-semibold text-gray-700 mb-4">Productos</h3>
         <p className="text-gray-500">Listado de productos...</p>
-        {/* Ejemplo: un botón simple para añadir un producto */}
         <button className="mt-4 bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md">
           Añadir Producto
         </button>
@@ -417,10 +379,8 @@ const App = () => {
     </div>
   );
 
-
   const OrdersManagement = () => (
     <div className="p-6">
-      {/* MODIFICACIÓN: "Gestión de Pedidos/Transacciones" a "Gestión de Órdenes de Servicio" */}
       <h2 className="text-3xl font-bold text-gray-800 mb-6">Gestión de Órdenes de Servicio</h2>
       <p className="text-gray-600">Aquí se visualizarían y gestionarían las órdenes de servicio/mantenimiento realizadas desde la aplicación móvil.</p>
       <div className="mt-6 p-6 bg-white rounded-lg shadow-md">
@@ -437,10 +397,6 @@ const App = () => {
     </div>
   );
 
-  // **Se elimina el componente ReportsAndStats según la solicitud**
-  // const ReportsAndStats = () => { /* ... */ };
-
-  // Componente del formulario de inicio de sesión
   const LoginForm = () => {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
@@ -493,10 +449,6 @@ const App = () => {
     );
   };
 
-  // **Se elimina el componente UserModal según la solicitud**
-  // const UserModal = ({ isOpen, onClose, user, type, onSave, onDelete }) => { /* ... */ };
-
-  // Componente de modal de equipo (Ver/Editar/Añadir)
   const EquipmentModal = ({ isOpen, onClose, equipmentItem, type, onSave, onDelete }) => {
     const [nombre, setNombre] = useState('');
     const [tipo, setTipo] = useState('');
@@ -586,7 +538,7 @@ const App = () => {
                   type="button"
                   onClick={() => {
                     onClose();
-                    openEquipmentModal(equipmentItem, 'edit'); // Reabre en modo edición
+                    openEquipmentModal(equipmentItem, 'edit');
                   }}
                   className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
                 >
@@ -624,17 +576,12 @@ const App = () => {
     );
   };
 
-  // Diseño principal de la aplicación
   return (
     <div className="min-h-screen bg-gray-100 font-sans text-gray-900">
-      {/* El CSS de Tailwind se carga via CDN en public/index.html */}
-
-      {/* Spinner de carga */}
       {isLoading && <LoadingSpinner />}
 
       {isAuthenticated ? (
         <div className="flex flex-col md:flex-row">
-          {/* Barra lateral de navegación */}
           <nav className="bg-indigo-800 text-white w-full md:w-64 flex-shrink-0 p-4 rounded-br-lg md:rounded-tr-none md:rounded-bl-lg shadow-lg">
             <div className="text-2xl font-bold mb-8 text-center">Admin Panel</div>
             <ul>
@@ -651,20 +598,6 @@ const App = () => {
                   Dashboard
                 </button>
               </li>
-              {/* MODIFICACIÓN: Se quita el elemento del menú "Usuarios" */}
-              {/* <li className="mb-3">
-                <button
-                  onClick={() => setCurrentView('users')}
-                  className={`block w-full text-left py-3 px-4 rounded-lg transition duration-200 ${
-                    currentView === 'users' ? 'bg-indigo-600 shadow-md' : 'hover:bg-indigo-700'
-                  }`}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 inline-block mr-3" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
-                  </svg>
-                  Usuarios
-                </button>
-              </li> */}
               <li className="mb-3">
                 <button
                   onClick={() => setCurrentView('equipment')}
@@ -703,24 +636,9 @@ const App = () => {
                     <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
                     <path fillRule="evenodd" d="M4 5a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V7a2 2 0 00-2-2h-1.586a1 1 0 01-.707-.293l-1.121-1.121A2 2 0 0011.172 3H8.828a2 2 0 00-1.414.586L6.293 4.707A1 1 0 015.586 5H4zm6 9a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
                   </svg>
-                  {/* MODIFICACIÓN: "Pedidos" a "Órdenes de Servicio" */}
                   Órdenes de Servicio
                 </button>
               </li>
-              {/* MODIFICACIÓN: Se quita el elemento del menú "Informes" */}
-              {/* <li className="mb-3">
-                <button
-                  onClick={() => setCurrentView('reports')}
-                  className={`block w-full text-left py-3 px-4 rounded-lg transition duration-200 ${
-                    currentView === 'reports' ? 'bg-indigo-600 shadow-md' : 'hover:bg-indigo-700'
-                  }`}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 inline-block mr-3" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M4 4a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2H4zm11.5 1h-2.12a.5.5 0 00-.472.287l-.896 1.792A.5.5 0 0111 7h-2a.5.5 0 01-.472-.287l-.896-1.792A.5.5 0 007.62 5H5.5A1.5 1.5 0 004 6.5v7A1.5 1.5 0 005.5 15h9A1.5 1.5 0 0016 13.5v-7A1.5 1.5 0 0014.5 5zm-3.5 6a1 1 0 100 2h1a1 1 0 100-2h-1z" clipRule="evenodd" />
-                  </svg>
-                  Informes
-                </button>
-              </li> */}
               <li className="mt-8">
                 <button
                   onClick={handleLogout}
@@ -735,29 +653,13 @@ const App = () => {
             </ul>
           </nav>
 
-          {/* Área de contenido principal */}
           <main className="flex-grow p-4 md:p-6 bg-gray-100 rounded-tl-lg md:rounded-bl-none md:rounded-tr-lg shadow-lg">
             {currentView === 'dashboard' && <Dashboard />}
-            {/* MODIFICACIÓN: Se quita la renderización de UserManagement */}
-            {/* {currentView === 'users' && <UserManagement />} */}
             {currentView === 'equipment' && <EquipmentManagement />}
             {currentView === 'data-masters' && <DataMasters />}
             {currentView === 'orders' && <OrdersManagement />}
-            {/* MODIFICACIÓN: Se quita la renderización de ReportsAndStats */}
-            {/* {currentView === 'reports' && <ReportsAndStats />} */}
           </main>
 
-          {/* MODIFICACIÓN: Se elimina el Modal de Usuario */}
-          {/* <UserModal
-            isOpen={isUserModalOpen}
-            onClose={closeUserModal}
-            user={currentUser}
-            type={userModalType}
-            onSave={handleSaveUser}
-            onDelete={handleDeleteUser}
-          /> */}
-
-          {/* Modal de Equipo */}
           <EquipmentModal
             isOpen={isEquipmentModalOpen}
             onClose={closeEquipmentModal}
